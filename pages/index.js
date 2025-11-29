@@ -239,6 +239,58 @@ const ZohoProjectsWidget = () => {
     }
   };
 
+  // Create Tasklist
+  const createTasklist = async (projectId) => {
+    try {
+      const url = `/api/tasklists?token=${accessToken}&portalId=${CONFIG.portalId}&projectId=${projectId}`;
+      
+      const payload = {
+        name: 'Default Tasklist'
+      };
+      
+      addDebug('Creating tasklist...', payload);
+      
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      addDebug('Create tasklist response status', res.status);
+      
+      const responseText = await res.text();
+      addDebug('Create tasklist raw response', responseText);
+      
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseErr) {
+        addDebug('Failed to parse create tasklist response', parseErr.message);
+        throw new Error(`Invalid response: ${responseText}`);
+      }
+      
+      addDebug('Create tasklist parsed response', data);
+      
+      if (res.ok) {
+        // Extract tasklist ID from response
+        const tasklistId = data?.tasklist?.id || data?.tasklist?.id_string || data?.id;
+        if (tasklistId) {
+          setDefaultTasklistId(tasklistId);
+          addDebug('Tasklist created successfully', { tasklistId });
+          return tasklistId;
+        } else {
+          throw new Error('No tasklist ID in response');
+        }
+      } else {
+        const errorMsg = data?.error?.title || data?.error?.message || JSON.stringify(data?.error) || 'Failed to create tasklist';
+        throw new Error(errorMsg);
+      }
+    } catch (err) {
+      addDebug('Create tasklist error', err.message);
+      throw err;
+    }
+  };
+
   // Create Task
   const createTask = async () => {
     if (!newTask.name || !selectedProject) {
@@ -246,15 +298,18 @@ const ZohoProjectsWidget = () => {
       return;
     }
     
-    if (!defaultTasklistId) {
-      setError('No tasklist available. Please create a tasklist first in Zoho Projects.');
-      return;
-    }
-    
     setLoading(true);
     addDebug('Creating task...', newTask);
     
     try {
+      let tasklistId = defaultTasklistId;
+      
+      // If no tasklist exists, create one
+      if (!tasklistId) {
+        addDebug('No tasklist found, creating one...');
+        tasklistId = await createTasklist(selectedProject);
+      }
+      
       const url = `/api/tasks?token=${accessToken}&portalId=${CONFIG.portalId}&projectId=${selectedProject}`;
       
       // Build payload according to Zoho API v3 requirements
@@ -263,7 +318,7 @@ const ZohoProjectsWidget = () => {
         description: newTask.description,
         priority: newTask.priority,
         tasklist: {
-          id: defaultTasklistId
+          id: tasklistId
         }
       };
       
