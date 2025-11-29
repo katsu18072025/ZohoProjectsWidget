@@ -149,11 +149,11 @@ function handleFetchProjects(context, data, payload) {
   }
 
   // Call backend to fetch projects
-  map response = invokeUrl([
-    "url": getBackendUrl() + "/api/projects?token=" + getAccessToken() + "&portalId=" + getPortalId(),
-    "type": "GET",
-    "headers": map("Content-Type", "application/json")
-  ]);
+  map response = invokeUrl(
+    url: getBackendUrl() + "/api/projects?token=" + getAccessToken() + "&portalId=" + getPortalId(),
+    type: "GET",
+    headers: {"Content-Type": "application/json"}
+  );
 
   if (response.get("status_code") == 200) {
     map responseBody = response.get("response");
@@ -181,11 +181,11 @@ function handleSelectProject(context, data, payload) {
   data.selectedProject = payload.project_id;
 
   // Fetch statuses for this project
-  map statusResponse = invokeUrl([
-    "url": getBackendUrl() + "/api/statuses?token=" + getAccessToken() + "&portalId=" + getPortalId() + "&projectId=" + data.selectedProject,
-    "type": "GET",
-    "headers": map("Content-Type", "application/json")
-  ]);
+  map statusResponse = invokeUrl(
+    url: getBackendUrl() + "/api/statuses?token=" + getAccessToken() + "&portalId=" + getPortalId() + "&projectId=" + data.selectedProject
+    type: "GET"
+    headers: {"Content-Type": "application/json"}
+  );
 
   if (statusResponse.get("status_code") == 200) {
     map statusBody = statusResponse.get("response");
@@ -193,11 +193,11 @@ function handleSelectProject(context, data, payload) {
   }
 
   // Fetch issues for this project
-  map issueResponse = invokeUrl([
-    "url": getBackendUrl() + "/api/tasks?token=" + getAccessToken() + "&portalId=" + getPortalId() + "&projectId=" + data.selectedProject,
-    "type": "GET",
-    "headers": map("Content-Type", "application/json")
-  ]);
+  map issueResponse = invokeUrl(
+    url: getBackendUrl() + "/api/tasks?token=" + getAccessToken() + "&portalId=" + getPortalId() + "&projectId=" + data.selectedProject
+    type: "GET"
+    headers: {"Content-Type": "application/json"}
+  );
 
   if (issueResponse.get("status_code") == 200) {
     map issueBody = issueResponse.get("response");
@@ -230,12 +230,12 @@ function handleCreateIssue(context, data, payload) {
     requestBody.put("description", payload.description != null ? payload.description : "");
     requestBody.put("severity", payload.severity != null ? payload.severity : "Medium");
     
-    map bugResponse = invokeUrl([
-      "url": getBackendUrl() + "/api/bugs?token=" + getAccessToken() + "&portalId=" + getPortalId() + "&projectId=" + data.selectedProject,
-      "type": "POST",
-      "headers": map("Content-Type", "application/json"),
-      "body": requestBody
-    ]);
+    map bugResponse = invokeUrl(
+      url: getBackendUrl() + "/api/bugs?token=" + getAccessToken() + "&portalId=" + getPortalId() + "&projectId=" + data.selectedProject
+      type: "POST"
+      headers: {"Content-Type": "application/json"}
+      body: requestBody
+    );
 
     if (bugResponse.get("status_code") == 200) {
       data.message = { "type": "success", "text": "Bug created successfully!" };
@@ -255,12 +255,12 @@ function handleCreateIssue(context, data, payload) {
       requestBody.put("tasklist", map("id", data.selectedTasklist));
     }
     
-    map taskResponse = invokeUrl([
-      "url": getBackendUrl() + "/api/tasks?token=" + getAccessToken() + "&portalId=" + getPortalId() + "&projectId=" + data.selectedProject,
-      "type": "POST",
-      "headers": map("Content-Type", "application/json"),
-      "body": requestBody
-    ]);
+    map taskResponse = invokeUrl(
+      url: getBackendUrl() + "/api/tasks?token=" + getAccessToken() + "&portalId=" + getPortalId() + "&projectId=" + data.selectedProject
+      type: "POST"
+      headers: {"Content-Type": "application/json"}
+      body: requestBody
+    );
 
     if (taskResponse.get("status_code") == 200) {
       data.message = { "type": "success", "text": "Task created successfully!" };
@@ -314,12 +314,12 @@ function handleUpdateIssue(context, data, payload) {
   updateBody.put("status", payload.status);
 
   // Call backend to update issue
-  map updateResponse = invokeUrl([
-    "url": getBackendUrl() + "/api/tasks?token=" + getAccessToken() + "&portalId=" + getPortalId() + "&projectId=" + data.selectedProject + "&taskId=" + issueId,
-    "type": "POST",
-    "headers": map("Content-Type", "application/json"),
-    "body": updateBody
-  ]);
+  map updateResponse = invokeUrl(
+    url: getBackendUrl() + "/api/tasks?token=" + getAccessToken() + "&portalId=" + getPortalId() + "&projectId=" + data.selectedProject + "&taskId=" + issueId
+    type: "POST"
+    headers: {"Content-Type": "application/json"}
+    body: updateBody
+  );
 
   if (updateResponse.get("status_code") == 200 || updateResponse.get("status_code") == 204) {
     data.message = { "type": "success", "text": "Issue updated successfully!" };
