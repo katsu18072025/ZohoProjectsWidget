@@ -14,14 +14,16 @@ export default async function handler(req, res) {
   }
 
   try {
-    const url = `https://projectsapi.zoho.com/restapi/portal/${portalId}/projects/${projectId}/statuses/`;
+    // Use v3 API endpoint instead of old restapi
+    const url = `https://projectsapi.zoho.com/api/v3/portal/${portalId}/projects/${projectId}/statuses`;
     
     console.log('Fetching statuses from:', url);
 
     const response = await fetch(url, {
       method: 'GET',
       headers: { 
-        'Authorization': `Zoho-oauthtoken ${token}`
+        'Authorization': `Zoho-oauthtoken ${token}`,
+        'Content-Type': 'application/json'
       }
     });
 

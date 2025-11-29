@@ -1,0 +1,608 @@
+/**
+ * SalesIQ Widget: Zoho Projects Issue Manager
+ * 
+ * This widget allows operators to manage Zoho Projects tasks and bugs directly from SalesIQ.
+ * It provides functionality to:
+ * - Fetch issues by customer email
+ * - Create new tasks/bugs
+ * - Update existing issue status
+ * 
+ * Backend: Next.js API endpoints (deployed to public HTTPS URL)
+ * 
+ * Widget State Contract:
+ * {
+ *   email: "customer@example.com",
+ *   projects: [ { id, name }, ... ],
+ *   selectedProject: "project_id",
+ *   issues: [ { id, title, status, description, ... }, ... ],
+ *   editingIssue: { id, title, status, ... } or null,
+ *   statuses: [ { id, name }, ... ],
+ *   message: { type: "success|error", text: "" }
+ * }
+ */
+
+// ============================================================================
+// MAIN ENTRY POINTS
+// ============================================================================
+
+/**
+ * detail(context) - Returns the initial UI definition
+ * Called when widget loads or after state updates
+ */
+function detail(context) {
+  // Initialize state if not present
+  if (!context.data) {
+    context.data = {
+      email: "",
+      projects: [],
+      selectedProject: "",
+      issues: [],
+      editingIssue: null,
+      statuses: [],
+      message: null
+    };
+  }
+
+  // Build sections based on current state
+  map sections = list();
+  
+  // Section 1: Email Input & Fetch
+  sections.add(getEmailInputSection(context.data));
+  
+  // Section 2: Project Selection (only show if email is entered)
+  if (context.data.email != "") {
+    sections.add(getProjectSelectionSection(context.data));
+  }
+  
+  // Section 3: Create Issue Form (only show if project is selected)
+  if (context.data.selectedProject != "") {
+    sections.add(getCreateIssueSection(context.data));
+  }
+  
+  // Section 4: Issues List (only show if issues exist)
+  if (context.data.issues.size() > 0) {
+    sections.add(getIssuesListSection(context.data));
+  }
+  
+  // Section 5: Edit Issue Form (only show if editing)
+  if (context.data.editingIssue != null) {
+    sections.add(getEditIssueSection(context.data));
+  }
+  
+  // Section 6: Messages
+  if (context.data.message != null) {
+    sections.add(getMessageSection(context.data.message));
+  }
+
+  return {
+    "sections": sections,
+    "data": context.data
+  };
+}
+
+/**
+ * action(context, payload) - Handles all user actions
+ * Called when user clicks buttons or submits forms
+ */
+function action(context, payload) {
+  map response = map();
+  map data = context.data;
+  
+  if (data == null) {
+    data = {
+      email: "",
+      projects: [],
+      selectedProject: "",
+      issues: [],
+      editingIssue: null,
+      statuses: [],
+      message: null
+    };
+  }
+
+  // Route to appropriate action handler
+  if (payload.action == "fetch_projects") {
+    response = handleFetchProjects(context, data, payload);
+  }
+  else if (payload.action == "select_project") {
+    response = handleSelectProject(context, data, payload);
+  }
+  else if (payload.action == "create_issue") {
+    response = handleCreateIssue(context, data, payload);
+  }
+  else if (payload.action == "edit_issue") {
+    response = handleEditIssue(context, data, payload);
+  }
+  else if (payload.action == "update_issue") {
+    response = handleUpdateIssue(context, data, payload);
+  }
+  else if (payload.action == "cancel_edit") {
+    data.editingIssue = null;
+    data.message = null;
+    response = detail(context);
+  }
+  else if (payload.action == "clear_message") {
+    data.message = null;
+    response = detail(context);
+  }
+  else {
+    data.message = { "type": "error", "text": "Unknown action: " + payload.action };
+    response = detail(context);
+  }
+
+  return response;
+}
+
+// ============================================================================
+// ACTION HANDLERS
+// ============================================================================
+
+/**
+ * Fetch projects for the entered email
+ */
+function handleFetchProjects(context, data, payload) {
+  data.email = payload.email;
+  
+  if (data.email == "" || data.email == null) {
+    data.message = { "type": "error", "text": "Please enter a customer email" };
+    return detail(context);
+  }
+
+  // Call backend to fetch projects
+  map response = invokeUrl([
+    "url": getBackendUrl() + "/api/projects?token=" + getAccessToken() + "&portalId=" + getPortalId(),
+    "type": "GET",
+    "headers": map("Content-Type", "application/json")
+  ]);
+
+  if (response.get("status_code") == 200) {
+    map responseBody = response.get("response");
+    data.projects = responseBody.get("projects") != null ? responseBody.get("projects") : list();
+    data.message = { "type": "success", "text": "Projects loaded successfully" };
+    
+    // Auto-select first project if available
+    if (data.projects.size() > 0) {
+      data.selectedProject = data.projects.get(0).get("id_string") != null ? data.projects.get(0).get("id_string") : data.projects.get(0).get("id");
+      
+      // Fetch issues for this project
+      return handleSelectProject(context, data, map("project_id", data.selectedProject));
+    }
+  } else {
+    data.message = { "type": "error", "text": "Failed to fetch projects: " + response.get("response") };
+  }
+
+  return detail(context);
+}
+
+/**
+ * Select a project and fetch its issues
+ */
+function handleSelectProject(context, data, payload) {
+  data.selectedProject = payload.project_id;
+
+  // Fetch statuses for this project
+  map statusResponse = invokeUrl([
+    "url": getBackendUrl() + "/api/statuses?token=" + getAccessToken() + "&portalId=" + getPortalId() + "&projectId=" + data.selectedProject,
+    "type": "GET",
+    "headers": map("Content-Type", "application/json")
+  ]);
+
+  if (statusResponse.get("status_code") == 200) {
+    map statusBody = statusResponse.get("response");
+    data.statuses = statusBody.get("statuses") != null ? statusBody.get("statuses") : list();
+  }
+
+  // Fetch issues for this project
+  map issueResponse = invokeUrl([
+    "url": getBackendUrl() + "/api/tasks?token=" + getAccessToken() + "&portalId=" + getPortalId() + "&projectId=" + data.selectedProject,
+    "type": "GET",
+    "headers": map("Content-Type", "application/json")
+  ]);
+
+  if (issueResponse.get("status_code") == 200) {
+    map issueBody = issueResponse.get("response");
+    data.issues = issueBody.get("tasks") != null ? issueBody.get("tasks") : list();
+    data.message = { "type": "success", "text": "Issues loaded: " + data.issues.size() + " found" };
+  } else {
+    data.message = { "type": "error", "text": "Failed to fetch issues" };
+  }
+
+  data.editingIssue = null;
+  return detail(context);
+}
+
+/**
+ * Create a new issue (task or bug)
+ */
+function handleCreateIssue(context, data, payload) {
+  // Validate required fields
+  if (payload.title == "" || payload.title == null) {
+    data.message = { "type": "error", "text": "Title is required" };
+    return detail(context);
+  }
+
+  // Determine if creating task or bug
+  map requestBody = map();
+  
+  if (payload.issueType == "bug") {
+    // Bug creation
+    requestBody.put("title", payload.title);
+    requestBody.put("description", payload.description != null ? payload.description : "");
+    requestBody.put("severity", payload.severity != null ? payload.severity : "Medium");
+    
+    map bugResponse = invokeUrl([
+      "url": getBackendUrl() + "/api/bugs?token=" + getAccessToken() + "&portalId=" + getPortalId() + "&projectId=" + data.selectedProject,
+      "type": "POST",
+      "headers": map("Content-Type", "application/json"),
+      "body": requestBody
+    ]);
+
+    if (bugResponse.get("status_code") == 200) {
+      data.message = { "type": "success", "text": "Bug created successfully!" };
+      // Refresh issues list
+      return handleSelectProject(context, data, map("project_id", data.selectedProject));
+    } else {
+      data.message = { "type": "error", "text": "Failed to create bug: " + bugResponse.get("response") };
+    }
+  } else {
+    // Task creation
+    requestBody.put("name", payload.title);
+    requestBody.put("description", payload.description != null ? payload.description : "");
+    requestBody.put("priority", payload.priority != null ? payload.priority : "medium");
+    
+    // Add tasklist if available
+    if (data.selectedTasklist != null) {
+      requestBody.put("tasklist", map("id", data.selectedTasklist));
+    }
+    
+    map taskResponse = invokeUrl([
+      "url": getBackendUrl() + "/api/tasks?token=" + getAccessToken() + "&portalId=" + getPortalId() + "&projectId=" + data.selectedProject,
+      "type": "POST",
+      "headers": map("Content-Type", "application/json"),
+      "body": requestBody
+    ]);
+
+    if (taskResponse.get("status_code") == 200) {
+      data.message = { "type": "success", "text": "Task created successfully!" };
+      // Refresh issues list
+      return handleSelectProject(context, data, map("project_id", data.selectedProject));
+    } else {
+      data.message = { "type": "error", "text": "Failed to create task: " + taskResponse.get("response") };
+    }
+  }
+
+  return detail(context);
+}
+
+/**
+ * Start editing an issue
+ */
+function handleEditIssue(context, data, payload) {
+  // Find the issue to edit
+  map issueToEdit = null;
+  for each issue in data.issues {
+    map issueId = issue.get("id_string") != null ? issue.get("id_string") : issue.get("id");
+    if (issueId == payload.issue_id) {
+      issueToEdit = issue;
+      break;
+    }
+  }
+
+  if (issueToEdit != null) {
+    data.editingIssue = issueToEdit;
+    data.message = null;
+  } else {
+    data.message = { "type": "error", "text": "Issue not found" };
+  }
+
+  return detail(context);
+}
+
+/**
+ * Update an existing issue
+ */
+function handleUpdateIssue(context, data, payload) {
+  if (data.editingIssue == null) {
+    data.message = { "type": "error", "text": "No issue selected for editing" };
+    return detail(context);
+  }
+
+  map issueId = data.editingIssue.get("id_string") != null ? data.editingIssue.get("id_string") : data.editingIssue.get("id");
+  
+  // Build update payload
+  map updateBody = map();
+  updateBody.put("status", payload.status);
+
+  // Call backend to update issue
+  map updateResponse = invokeUrl([
+    "url": getBackendUrl() + "/api/tasks?token=" + getAccessToken() + "&portalId=" + getPortalId() + "&projectId=" + data.selectedProject + "&taskId=" + issueId,
+    "type": "POST",
+    "headers": map("Content-Type", "application/json"),
+    "body": updateBody
+  ]);
+
+  if (updateResponse.get("status_code") == 200 || updateResponse.get("status_code") == 204) {
+    data.message = { "type": "success", "text": "Issue updated successfully!" };
+    data.editingIssue = null;
+    
+    // Refresh issues list
+    return handleSelectProject(context, data, map("project_id", data.selectedProject));
+  } else {
+    data.message = { "type": "error", "text": "Failed to update issue: " + updateResponse.get("response") };
+  }
+
+  return detail(context);
+}
+
+// ============================================================================
+// UI SECTION BUILDERS
+// ============================================================================
+
+/**
+ * Email input section
+ */
+function getEmailInputSection(data) {
+  return {
+    "type": "form",
+    "title": "Find Issues by Customer Email",
+    "fields": list(
+      map(
+        "id", "email",
+        "type", "text",
+        "label", "Customer Email",
+        "placeholder", "customer@example.com",
+        "value", data.email,
+        "required", true
+      )
+    ),
+    "buttons": list(
+      map(
+        "id", "fetch_projects_btn",
+        "label", "Fetch Projects",
+        "type": "primary",
+        "action", "fetch_projects"
+      )
+    )
+  };
+}
+
+/**
+ * Project selection section
+ */
+function getProjectSelectionSection(data) {
+  list projectOptions = list();
+  for each project in data.projects {
+    projectOptions.add(map(
+      "label", project.get("name"),
+      "value", project.get("id_string") != null ? project.get("id_string") : project.get("id")
+    ));
+  }
+
+  return {
+    "type": "form",
+    "title": "Select Project",
+    "fields": list(
+      map(
+        "id", "project_id",
+        "type", "select",
+        "label", "Project",
+        "options", projectOptions,
+        "value", data.selectedProject,
+        "required", true
+      )
+    ),
+    "buttons": list(
+      map(
+        "id", "select_project_btn",
+        "label", "Load Issues",
+        "type": "primary",
+        "action", "select_project"
+      )
+    )
+  };
+}
+
+/**
+ * Create issue form section
+ */
+function getCreateIssueSection(data) {
+  list issueTypeOptions = list(
+    map("label", "Task", "value", "task"),
+    map("label", "Bug", "value", "bug")
+  );
+
+  list priorityOptions = list(
+    map("label", "Low", "value", "low"),
+    map("label", "Medium", "value", "medium"),
+    map("label", "High", "value", "high"),
+    map("label", "None", "value", "none")
+  );
+
+  list severityOptions = list(
+    map("label", "Low", "value", "Low"),
+    map("label", "Medium", "value", "Medium"),
+    map("label", "High", "value", "High"),
+    map("label", "Critical", "value", "Critical")
+  );
+
+  return {
+    "type": "form",
+    "title": "Create New Issue",
+    "fields": list(
+      map(
+        "id", "issueType",
+        "type", "select",
+        "label", "Issue Type",
+        "options", issueTypeOptions,
+        "value", "task",
+        "required", true
+      ),
+      map(
+        "id", "title",
+        "type", "text",
+        "label", "Title",
+        "placeholder", "Enter issue title",
+        "required", true
+      ),
+      map(
+        "id", "description",
+        "type", "textarea",
+        "label", "Description",
+        "placeholder", "Enter issue description"
+      ),
+      map(
+        "id", "priority",
+        "type", "select",
+        "label", "Priority (for Tasks)",
+        "options", priorityOptions,
+        "value", "medium"
+      ),
+      map(
+        "id", "severity",
+        "type", "select",
+        "label", "Severity (for Bugs)",
+        "options", severityOptions,
+        "value", "Medium"
+      )
+    ),
+    "buttons": list(
+      map(
+        "id", "create_issue_btn",
+        "label", "Create Issue",
+        "type": "primary",
+        "action", "create_issue"
+      )
+    )
+  };
+}
+
+/**
+ * Issues list section
+ */
+function getIssuesListSection(data) {
+  list issueCards = list();
+  
+  for each issue in data.issues {
+    map issueId = issue.get("id_string") != null ? issue.get("id_string") : issue.get("id");
+    map statusName = issue.get("status") != null ? issue.get("status").get("name") : "Unknown";
+    
+    issueCards.add(map(
+      "id", issueId,
+      "title", issue.get("name"),
+      "status", statusName,
+      "description", issue.get("description") != null ? issue.get("description") : "No description"
+    ));
+  }
+
+  return {
+    "type": "list",
+    "title": "Issues (" + data.issues.size() + ")",
+    "items": issueCards,
+    "itemTemplate": {
+      "title": "{title}",
+      "subtitle": "Status: {status}",
+      "description": "{description}",
+      "buttons": list(
+        map(
+          "label", "Edit",
+          "type": "secondary",
+          "action", "edit_issue",
+          "params", map("issue_id", "{id}")
+        )
+      )
+    }
+  };
+}
+
+/**
+ * Edit issue form section
+ */
+function getEditIssueSection(data) {
+  list statusOptions = list();
+  for each status in data.statuses {
+    statusOptions.add(map(
+      "label", status.get("name"),
+      "value", status.get("id")
+    ));
+  }
+
+  map currentStatusId = data.editingIssue.get("status") != null ? data.editingIssue.get("status").get("id") : "";
+
+  return {
+    "type": "form",
+    "title": "Edit Issue: " + data.editingIssue.get("name"),
+    "fields": list(
+      map(
+        "id", "status",
+        "type", "select",
+        "label", "Status",
+        "options", statusOptions,
+        "value", currentStatusId,
+        "required", true
+      )
+    ),
+    "buttons": list(
+      map(
+        "id", "update_issue_btn",
+        "label", "Update Issue",
+        "type": "primary",
+        "action", "update_issue"
+      ),
+      map(
+        "id", "cancel_edit_btn",
+        "label", "Cancel",
+        "type": "secondary",
+        "action", "cancel_edit"
+      )
+    )
+  };
+}
+
+/**
+ * Message section (success/error)
+ */
+function getMessageSection(message) {
+  map bgColor = message.get("type") == "success" ? "#d4edda" : "#f8d7da";
+  map textColor = message.get("type") == "success" ? "#155724" : "#721c24";
+
+  return {
+    "type": "text",
+    "title": message.get("type") == "success" ? "✓ Success" : "✗ Error",
+    "content": message.get("text"),
+    "style": map(
+      "backgroundColor", bgColor,
+      "color", textColor,
+      "padding", "12px",
+      "borderRadius", "4px"
+    )
+  };
+}
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+
+/**
+ * Get backend URL - CONFIGURE THIS WITH YOUR DEPLOYED URL
+ */
+function getBackendUrl() {
+  // Replace with your deployed Next.js app URL
+  return "https://your-app.vercel.app"; // or "http://localhost:3001" for local testing
+}
+
+/**
+ * Get Zoho access token
+ * In production, this should be retrieved from Zoho's OAuth flow
+ */
+function getAccessToken() {
+  // This should be passed from context or retrieved from Zoho's auth
+  // For now, return a placeholder - you'll need to implement proper OAuth
+  return "YOUR_ZOHO_ACCESS_TOKEN";
+}
+
+/**
+ * Get Portal ID from environment or config
+ */
+function getPortalId() {
+  return "907432121"; // Replace with your portal ID
+}
