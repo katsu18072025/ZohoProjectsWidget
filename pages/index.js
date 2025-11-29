@@ -13,6 +13,7 @@ const ZohoProjectsWidget = () => {
   const [tasks, setTasks] = useState([]);
   const [filteredTasks, setFilteredTasks] = useState([]);
   const [projectStatuses, setProjectStatuses] = useState([]);
+  const [defaultTasklistId, setDefaultTasklistId] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -26,7 +27,7 @@ const ZohoProjectsWidget = () => {
   const [newTask, setNewTask] = useState({
     name: '',
     description: '',
-    priority: 'Medium'
+    priority: 'medium'
   });
 
   const [newBug, setNewBug] = useState({
@@ -106,7 +107,6 @@ const ZohoProjectsWidget = () => {
         addDebug('Projects loaded', { count: data.projects.length });
         
         if (data.projects.length > 0) {
-          // FIXED: Use id_string instead of id to preserve the full number
           const firstProjectId = data.projects[0].id_string || String(data.projects[0].id);
           setSelectedProject(firstProjectId);
           addDebug('Selected first project', firstProjectId);
@@ -168,6 +168,13 @@ const ZohoProjectsWidget = () => {
         setTasks(data.tasks);
         addDebug('Tasks loaded successfully', { count: data.tasks.length });
         
+        // Extract default tasklist ID from first task
+        if (data.tasks.length > 0 && data.tasks[0].tasklist) {
+          const tasklistId = data.tasks[0].tasklist.id_string || data.tasks[0].tasklist.id;
+          setDefaultTasklistId(tasklistId);
+          addDebug('Default tasklist ID set', tasklistId);
+        }
+        
         // Also fetch project statuses for this project
         await fetchProjectStatuses(token, projectId);
         
@@ -205,9 +212,14 @@ const ZohoProjectsWidget = () => {
       } else {
         // If statuses API fails, use default statuses
         setProjectStatuses([
-          { id: '2595946000000016068', name: 'Open', type: 'open' },
-          { id: '2595946000000027065', name: 'In Progress', type: 'inprogress' },
-          { id: '2595946000000016070', name: 'Completed', type: 'closed' }
+          { id: '2595946000000016068', name: 'Open', type: 'open', color_code: '#74cb80' },
+          { id: '2595946000000031001', name: 'In Progress', type: 'open', color_code: '#08aeea' },
+          { id: '2595946000000031003', name: 'In Review', type: 'open', color_code: '#8cbabb' },
+          { id: '2595946000000031005', name: 'To be Tested', type: 'open', color_code: '#f6a96d' },
+          { id: '2595946000000031007', name: 'On Hold', type: 'open', color_code: '#fbc11e' },
+          { id: '2595946000000031009', name: 'Delayed', type: 'open', color_code: '#c5a070' },
+          { id: '2595946000000016071', name: 'Closed', type: 'closed', color_code: '#f56b62' },
+          { id: '2595946000000031011', name: 'Cancelled', type: 'closed', color_code: '#558dca' }
         ]);
         addDebug('Using default statuses');
       }
@@ -215,9 +227,14 @@ const ZohoProjectsWidget = () => {
       addDebug('Failed to fetch project statuses', err.message);
       // Use defaults
       setProjectStatuses([
-        { id: '2595946000000016068', name: 'Open', type: 'open' },
-        { id: '2595946000000027065', name: 'In Progress', type: 'inprogress' },
-        { id: '2595946000000016070', name: 'Completed', type: 'closed' }
+        { id: '2595946000000016068', name: 'Open', type: 'open', color_code: '#74cb80' },
+        { id: '2595946000000031001', name: 'In Progress', type: 'open', color_code: '#08aeea' },
+        { id: '2595946000000031003', name: 'In Review', type: 'open', color_code: '#8cbabb' },
+        { id: '2595946000000031005', name: 'To be Tested', type: 'open', color_code: '#f6a96d' },
+        { id: '2595946000000031007', name: 'On Hold', type: 'open', color_code: '#fbc11e' },
+        { id: '2595946000000031009', name: 'Delayed', type: 'open', color_code: '#c5a070' },
+        { id: '2595946000000016071', name: 'Closed', type: 'closed', color_code: '#f56b62' },
+        { id: '2595946000000031011', name: 'Cancelled', type: 'closed', color_code: '#558dca' }
       ]);
     }
   };
@@ -229,33 +246,59 @@ const ZohoProjectsWidget = () => {
       return;
     }
     
+    if (!defaultTasklistId) {
+      setError('No tasklist available. Please create a tasklist first in Zoho Projects.');
+      return;
+    }
+    
     setLoading(true);
     addDebug('Creating task...', newTask);
     
     try {
       const url = `/api/tasks?token=${accessToken}&portalId=${CONFIG.portalId}&projectId=${selectedProject}`;
+      
+      // Build payload according to Zoho API v3 requirements
+      const payload = {
+        name: newTask.name,
+        description: newTask.description,
+        priority: newTask.priority,
+        tasklist: {
+          id: defaultTasklistId
+        }
+      };
+      
+      addDebug('Create task payload', payload);
+      
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: newTask.name,
-          description: newTask.description,
-          priority: newTask.priority
-        })
+        body: JSON.stringify(payload)
       });
       
       addDebug('Create task response status', res.status);
-      const data = await res.json();
-      addDebug('Create task response', data);
       
-      if (res.ok && data?.tasks?.[0]) {
-        setNewTask({ name: '', description: '', priority: 'Medium' });
+      const responseText = await res.text();
+      addDebug('Create task raw response', responseText);
+      
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseErr) {
+        addDebug('Failed to parse create task response', parseErr.message);
+        throw new Error(`Invalid response: ${responseText}`);
+      }
+      
+      addDebug('Create task parsed response', data);
+      
+      if (res.ok && (data?.tasks?.[0] || data?.id)) {
+        setNewTask({ name: '', description: '', priority: 'medium' });
         setShowCreateTask(false);
         setSuccess('Task created successfully!');
         setTimeout(() => setSuccess(''), 3000);
         await fetchTasks(accessToken, selectedProject);
       } else {
-        throw new Error(data.error || 'Failed to create task');
+        const errorMsg = data?.error?.title || data?.error?.message || JSON.stringify(data?.error) || 'Failed to create task';
+        throw new Error(errorMsg);
       }
     } catch (err) {
       addDebug('Create task error', err.message);
@@ -308,30 +351,37 @@ const ZohoProjectsWidget = () => {
 
   // Update Task Status
   const updateTaskStatus = async (taskId, statusId) => {
+    if (!statusId) {
+      setError('Please select a status');
+      return;
+    }
+    
     setLoading(true);
     addDebug('Updating task status...', { taskId, statusId });
     
     try {
-      const url = `/api/tasks?token=${accessToken}&portalId=${CONFIG.portalId}&projectId=${selectedProject}&action=update`;
+      const url = `/api/tasks?token=${accessToken}&portalId=${CONFIG.portalId}&projectId=${selectedProject}&taskId=${taskId}`;
+      
+      const payload = { status: statusId };
+      addDebug('Update request payload', payload);
+      
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          taskId: taskId,
-          data: { status: statusId }
-        })
+        body: JSON.stringify(payload)
       });
       
       addDebug('Update task response status', res.status);
       
-      if (res.ok) {
-        setSuccess('Task updated successfully!');
+      if (res.ok || res.status === 204) {
+        setSuccess('Task status updated successfully!');
         setTimeout(() => setSuccess(''), 3000);
-        await fetchTasks(accessToken, selectedProject);
         setEditingTask(null);
+        // Refresh tasks to show updated status
+        await fetchTasks(accessToken, selectedProject);
       } else {
         const data = await res.json();
-        throw new Error(data.error || 'Failed to update task');
+        throw new Error(data.error || 'Failed to update task status');
       }
     } catch (err) {
       addDebug('Update task error', err.message);
@@ -384,7 +434,7 @@ const ZohoProjectsWidget = () => {
 
   const getStatusIcon = (statusName) => {
     const status = (statusName || '').toLowerCase();
-    if (status.includes('complete')) return <CheckCircle className="w-4 h-4 text-green-500" />;
+    if (status.includes('complete') || status.includes('closed')) return <CheckCircle className="w-4 h-4 text-green-500" />;
     if (status.includes('progress')) return <Clock className="w-4 h-4 text-blue-500" />;
     return <AlertCircle className="w-4 h-4 text-gray-500" />;
   };
@@ -538,9 +588,10 @@ const ZohoProjectsWidget = () => {
               onChange={(e) => setNewTask({ ...newTask, priority: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-md"
             >
-              <option value="High">High Priority</option>
-              <option value="Medium">Medium Priority</option>
-              <option value="Low">Low Priority</option>
+              <option value="high">High Priority</option>
+              <option value="medium">Medium Priority</option>
+              <option value="low">Low Priority</option>
+              <option value="none">No Priority</option>
             </select>
             <button
               onClick={createTask}
@@ -641,18 +692,18 @@ const ZohoProjectsWidget = () => {
                   </div>
                 </div>
                 <button
-                  onClick={() => setEditingTask((task.id_string || task.id) === editingTask ? null : (task.id_string || task.id))}
+                  onClick={() => setEditingTask(task.id_string === editingTask ? null : task.id_string)}
                   className="text-blue-600 hover:text-blue-800"
                 >
                   <Edit2 className="w-4 h-4" />
                 </button>
               </div>
 
-              {editingTask === (task.id_string || task.id) && (
+              {editingTask === task.id_string && (
                 <div className="mt-3 pt-3 border-t space-y-2">
                   <label className="block text-sm font-medium text-gray-700">Update Status:</label>
                   <select
-                    onChange={(e) => updateTaskStatus(task.id_string || task.id, e.target.value)}
+                    onChange={(e) => updateTaskStatus(task.id_string, e.target.value)}
                     defaultValue={task.status?.id || ''}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
                   >
