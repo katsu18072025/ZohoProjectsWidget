@@ -692,18 +692,18 @@ const ZohoProjectsWidget = () => {
                   </div>
                 </div>
                 <button
-                  onClick={() => setEditingTask(task.id_string === editingTask ? null : task.id_string)}
+                  onClick={() => setEditingTask((task.id_string || task.id) === editingTask ? null : (task.id_string || task.id))}
                   className="text-blue-600 hover:text-blue-800"
                 >
                   <Edit2 className="w-4 h-4" />
                 </button>
               </div>
 
-              {editingTask === task.id_string && (
+              {editingTask === (task.id_string || task.id) && (
                 <div className="mt-3 pt-3 border-t space-y-2">
                   <label className="block text-sm font-medium text-gray-700">Update Status:</label>
                   <select
-                    onChange={(e) => updateTaskStatus(task.id_string, e.target.value)}
+                    onChange={(e) => updateTaskStatus(task.id_string || task.id, e.target.value)}
                     defaultValue={task.status?.id || ''}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
                   >
